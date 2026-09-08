@@ -91,23 +91,28 @@ async function synthesizeSpeech(text) {
   const voice = process.env.GEMINI_TTS_VOICE || 'Gacrux';
   const pcmChunks = [];
   for (const chunk of splitForSpeech(text)) {
-    const prompt = `Aşağıdaki Türkçe metni Madam Saye adlı olgun, sıcak, gizemli bir kadın falcı gibi oku. Robot gibi okuma; muhabbet eder gibi, doğal duraklamalarla, hafif teatral ama sakin konuş.\n\n${chunk}`;
+    const prompt = Aşağıdaki Türkçe metni Madam Saye adlı olgun, sıcak, gizemli bir kadın falcı gibi oku. Robot gibi okuma; muhabbet eder gibi, doğal duraklamalarla, hafif teatral ama sakin konuş.
+
+;
     try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+      const response = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY },
-        signal: AbortSignal.timeout(45000),
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': process.env.GEMINI_API_KEY,
+          'Api-Revision': '2026-05-20'
+        },
+        signal: AbortSignal.timeout(60000),
         body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            responseModalities: ['AUDIO'],
-            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } }
-          }
+          model,
+          input: prompt,
+          response_format: { type: 'audio' },
+          generation_config: { speech_config: [{ voice }] }
         })
       });
       if (!response.ok) return null;
       const data = await response.json();
-      const pcm = data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || data.candidates?.[0]?.content?.parts?.[0]?.inline_data?.data;
+      const pcm = data.output_audio?.data || data.outputAudio?.data || data.audio?.data;
       if (!pcm) return null;
       pcmChunks.push(Buffer.from(pcm, 'base64'));
     } catch {
