@@ -176,7 +176,7 @@ export function makeServer() {
         const text = typeof body.text === 'string' ? body.text.trim() : '';
         if (!text || text.length > 4000) return send(400, { error: 'Geçersiz metin.' });
         const audio = await synthesizeSpeech(text);
-        if (!audio) return send(502, { error: 'Ses hazırlanamadı.' });
+        if (!audio || audio.error) return send(502, { error: 'Ses hazırlanamadı.', ttsError: audio?.error || 'Bilinmeyen TTS hatası', ttsDetail: audio?.detail || '' });
         return send(200, { audio });
       } catch { return send(400, { error: 'Geçersiz istek.' }); }
     }
