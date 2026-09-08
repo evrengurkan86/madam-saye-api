@@ -113,7 +113,11 @@ async function synthesizeSpeech(text) {
           generation_config: { speech_config: [{ voice }] }
         })
       });
-      if (!response.ok) return null;
+      if (!response.ok) {
+        let detail = '';
+        try { detail = (await response.text()).slice(0, 500); } catch {}
+        return { error: `Gemini TTS HTTP ${response.status}`, detail };
+      }
       const data = await response.json();
       const audioBlocks = [];
       if (data.output_audio?.data) audioBlocks.push(data.output_audio.data);
@@ -124,10 +128,10 @@ async function synthesizeSpeech(text) {
           if (item.data) audioBlocks.push(item.data);
         }
       }
-      if (!audioBlocks.length) return null;
+      if (!audioBlocks.length) return { error: 'Gemini TTS audio alanı bulunamadı', detail: JSON.stringify(data).slice(0, 500) };
       pcmChunks.push(...audioBlocks.map(block => Buffer.from(block, 'base64')));
-    } catch {
-      return null;
+    } catch (e) {
+      return { error: 'Gemini TTS bağlantı hatası', detail: String(e).slice(0, 500) };
     }
   }
   if (!pcmChunks.length) return null;
