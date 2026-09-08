@@ -179,7 +179,7 @@ export function makeServer() {
       const parts = [{ text: JSON.stringify({ today, kind: body.kind, topic: body.topic, question: body.question, cards: body.cards || [], conversation: body.conversation || [], news: sources }) }];
       if (body.image) parts.push({ inline_data: body.image });
       const model = encodeURIComponent(process.env.GEMINI_MODEL);
-      const payload = JSON.stringify({ system_instruction: { parts: [{ text: instruction }] }, contents: [{ role: 'user', parts }], generationConfig: { temperature: 0.85, maxOutputTokens: 1800 } });
+      const payload = JSON.stringify({ system_instruction: { parts: [{ text: instruction }] }, contents: [{ role: 'user', parts }], generationConfig: { temperature: 0.85, maxOutputTokens: 3200 } });
       let response;
       for (let attempt = 0; attempt < 3; attempt++) {
         response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
@@ -197,18 +197,43 @@ export function makeServer() {
         return send(response.status === 429 ? 429 : 502, { error: 'Yorum servisi yanıt veremedi.', upstreamStatus: response.status, detail });
       }
       const data = await response.json();
-      const candidate = data.candidates?.[0];
-      const text = candidate?.content?.parts?.filter(p => !p.thought).map(p => p.text || '').join('').trim();
-      if (!text) return send(502, { error: 'Tam yorum alınamadı.', finishReason: candidate?.finishReason || null });
-      const audio = await synthesizeSpeech(text);
-      send(200, { text, audio, finishReason: candidate?.finishReason || null, sources, newsStatus: sources.length ? 'available' : 'unavailable' });
+      let candidate = data.candidates?.[0];
+      let text = candidate?.content?.parts?.filter(p => !p.thought).map(p => p.text || '').join('').trim();
+      let finishReason = candidate?.finishReason || null;
+      if (text && finishReason === 'MAX_TOKENS') {
+        const continuationPayload = JSON.stringify({
+          system_instruction: { parts: [{ text: instruction }] },
+          contents: [
+            { role: 'user', parts },
+            { role: 'model', parts: [{ text }] },
+            { role: 'user', parts: [{ text: 'Yorum yarıda kaldı. Aynı falı tekrar etmeden, kaldığın cümleden doğal biçimde devam ettir ve mutlaka kapanış cümlesiyle tamamla.' }] }
+          ],
+          generationConfig: { temperature: 0.75, maxOutputTokens: 1800 }
+        });
+        const continuation = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY }, signal: AbortSignal.timeout(55000), body: continuationPayload
+        });
+        if (continuation.ok) {
+          const moreData = await continuation.json();
+          const moreCandidate = moreData.candidates?.[0];
+          const moreText = moreCandidate?.content?.parts?.filter(p => !p.thought).map(p => p.text || '').join('').trim();
+          if (moreText) {
+            text = `${text}
+
+${moreText}`;
+            finishReason = moreCandidate?.finishReason || finishReason;
+          }
+        }
+      }
+      if (!text) return send(502, { error: 'Tam yorum alınamadı.', finishReason });
+      send(200, { text, hasAudio: true, finishReason, sources, newsStatus: sources.length ? 'available' : 'unavailable' });
     } catch { send(502, { error: 'Bağlantı zaman aşımı veya servis hatası.' }); }
     finally { active--; }
   });
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const server = makeServer();
-  server.requestTimeout = 90000;
+  server.requestTimeout = 300000;
   const host = process.env.HOST || '127.0.0.1';
   const port = Number(process.env.PORT || 8787);
   server.listen(port, host, () => console.log(`Madam Saye API: http://${host}:${port}`));
