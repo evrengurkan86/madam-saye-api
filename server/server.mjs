@@ -79,6 +79,7 @@ export function makeServer() {
 </html>`);
     }
     if (req.url === '/health' && req.method === 'GET') return send(200, { ok: true });
+    if (req.url === '/config' && req.method === 'GET') return send(200, { geminiKeyConfigured: Boolean(process.env.GEMINI_API_KEY), geminiModel: process.env.GEMINI_MODEL || null, dailyLimit: Number(process.env.DAILY_LIMIT || 100) });
     if (req.url !== '/reading' || req.method !== 'POST') return send(404, { error: 'Bulunamadı.' });
     if (!process.env.GEMINI_API_KEY || !process.env.GEMINI_MODEL) return send(503, { error: 'Sunucu henüz yapılandırılmadı.' });
     let body;
