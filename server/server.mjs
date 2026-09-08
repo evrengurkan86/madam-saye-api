@@ -98,10 +98,15 @@ export function makeServer() {
       const parts = [{ text: JSON.stringify({ today, kind: body.kind, topic: body.topic, question: body.question, cards: body.cards || [], news: sources }) }];
       if (body.image) parts.push({ inline_data: body.image });
       const model = encodeURIComponent(process.env.GEMINI_MODEL);
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY }, signal: AbortSignal.timeout(55000),
-        body: JSON.stringify({ system_instruction: { parts: [{ text: instruction }] }, contents: [{ role: 'user', parts }], generationConfig: { temperature: 0.85, maxOutputTokens: 2200 } })
-      });
+      const payload = JSON.stringify({ system_instruction: { parts: [{ text: instruction }] }, contents: [{ role: 'user', parts }], generationConfig: { temperature: 0.85, maxOutputTokens: 1800 } });
+      let response;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY }, signal: AbortSignal.timeout(55000), body: payload
+        });
+        if (![429, 503].includes(response.status)) break;
+        if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 900 * (attempt + 1)));
+      }
       if (!response.ok) {
         let detail = '';
         try {
