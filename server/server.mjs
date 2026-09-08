@@ -115,9 +115,17 @@ async function synthesizeSpeech(text) {
       });
       if (!response.ok) return null;
       const data = await response.json();
-      const pcm = data.output_audio?.data || data.outputAudio?.data || data.audio?.data;
-      if (!pcm) return null;
-      pcmChunks.push(Buffer.from(pcm, 'base64'));
+      const audioBlocks = [];
+      if (data.output_audio?.data) audioBlocks.push(data.output_audio.data);
+      if (data.outputAudio?.data) audioBlocks.push(data.outputAudio.data);
+      if (data.audio?.data) audioBlocks.push(data.audio.data);
+      for (const step of data.steps || []) {
+        for (const item of step.content || []) {
+          if (item.data) audioBlocks.push(item.data);
+        }
+      }
+      if (!audioBlocks.length) return null;
+      pcmChunks.push(...audioBlocks.map(block => Buffer.from(block, 'base64')));
     } catch {
       return null;
     }
