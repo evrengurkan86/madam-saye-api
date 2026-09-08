@@ -91,9 +91,12 @@ async function synthesizeSpeech(text) {
   const voice = process.env.GEMINI_TTS_VOICE || 'Gacrux';
   const pcmChunks = [];
   for (const chunk of splitForSpeech(text)) {
-    const prompt = Aşağıdaki Türkçe metni Madam Saye adlı olgun, sıcak, gizemli bir kadın falcı gibi oku. Robot gibi okuma; muhabbet eder gibi, doğal duraklamalarla, hafif teatral ama sakin konuş.
-
-;
+    const prompt = [
+      'Aşağıdaki Türkçe metni Madam Saye adlı olgun, sıcak, gizemli bir kadın falcı gibi oku.',
+      'Robot gibi okuma; muhabbet eder gibi, doğal duraklamalarla, hafif teatral ama sakin konuş.',
+      '',
+      chunk
+    ].join(String.fromCharCode(10));
     try {
       const response = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
         method: 'POST',
