@@ -102,7 +102,14 @@ export function makeServer() {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY }, signal: AbortSignal.timeout(55000),
         body: JSON.stringify({ system_instruction: { parts: [{ text: instruction }] }, contents: [{ role: 'user', parts }], generationConfig: { temperature: 0.85, maxOutputTokens: 2200 } })
       });
-      if (!response.ok) return send(response.status === 429 ? 429 : 502, { error: 'Yorum servisi yanıt veremedi.' });
+      if (!response.ok) {
+        let detail = '';
+        try {
+          const upstream = await response.json();
+          detail = String(upstream.error?.message || '').slice(0, 300);
+        } catch {}
+        return send(response.status === 429 ? 429 : 502, { error: 'Yorum servisi yanıt veremedi.', upstreamStatus: response.status, detail });
+      }
       const data = await response.json();
       const candidate = data.candidates?.[0];
       const text = candidate?.content?.parts?.filter(p => !p.thought).map(p => p.text || '').join('').trim();
