@@ -138,6 +138,83 @@ async function synthesizeSpeech(text) {
   return { data: pcmToWavBase64FromBuffer(Buffer.concat(pcmChunks)), mimeType: 'audio/wav', voice };
 }
 
+async function synthesizeLiveSpeech(text) {
+  const model = process.env.GEMINI_LIVE_MODEL || 'gemini-3.1-flash-live-preview';
+  const voice = process.env.GEMINI_LIVE_VOICE || process.env.GEMINI_TTS_VOICE || 'Gacrux';
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) return { error: 'Gemini API anahtarı yok', detail: '' };
+  if (typeof WebSocket !== 'function') return { error: 'Node WebSocket desteği yok', detail: '' };
+  const url = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${encodeURIComponent(key)}`;
+  const prompt = [
+    'Kullanıcıya Madam Saye adlı yaşlı, sıcak ve gizemli kadın falcı gibi Türkçe cevap ver.',
+    'Çok uzun konuşma; 45-70 saniyelik doğal bir sesli muhabbet gibi anlat.',
+    'Falcı üslubunda, canım, bak şimdi ve üç vakte kadar gibi ifadeleri ölçülü kullan.',
+    '',
+    text
+  ].join(String.fromCharCode(10));
+  return await new Promise((resolve) => {
+    const pcmChunks = [];
+    let settled = false;
+    const done = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { ws.close(); } catch {}
+      resolve(value);
+    };
+    const timer = setTimeout(() => done({ error: 'Gemini Live zaman aşımı', detail: '' }), 45000);
+    let ws;
+    try {
+      ws = new WebSocket(url);
+    } catch (e) {
+      done({ error: 'Gemini Live bağlantı açılamadı', detail: String(e).slice(0, 500) });
+      return;
+    }
+    ws.addEventListener('open', () => {
+      ws.send(JSON.stringify({
+        setup: {
+          model: `models/${model}`,
+          generationConfig: {
+            responseModalities: ['AUDIO'],
+            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } }
+          },
+          systemInstruction: { parts: [{ text: instruction }] }
+        }
+      }));
+      ws.send(JSON.stringify({ realtimeInput: { text: prompt } }));
+    });
+    ws.addEventListener('message', async (event) => {
+      try {
+        const raw = typeof event.data === 'string'
+          ? event.data
+          : event.data instanceof Blob
+            ? Buffer.from(await event.data.arrayBuffer()).toString('utf8')
+            : Buffer.from(event.data).toString('utf8');
+        const data = JSON.parse(raw);
+        if (data.error) return done({ error: 'Gemini Live hata döndürdü', detail: JSON.stringify(data.error).slice(0, 500) });
+        const parts = data.serverContent?.modelTurn?.parts || [];
+        for (const part of parts) {
+          const audio = part.inlineData?.data || part.inline_data?.data;
+          if (audio) pcmChunks.push(Buffer.from(audio, 'base64'));
+        }
+        if (data.serverContent?.turnComplete || data.serverContent?.generationComplete) {
+          if (!pcmChunks.length) return done({ error: 'Gemini Live audio dönmedi', detail: JSON.stringify(data).slice(0, 500) });
+          return done({ data: pcmToWavBase64FromBuffer(Buffer.concat(pcmChunks)), mimeType: 'audio/wav', voice, model });
+        }
+      } catch (e) {
+        done({ error: 'Gemini Live cevap okunamadı', detail: String(e).slice(0, 500) });
+      }
+    });
+    ws.addEventListener('error', () => done({ error: 'Gemini Live WebSocket hatası', detail: '' }));
+    ws.addEventListener('close', () => {
+      if (!settled) {
+        if (pcmChunks.length) return done({ data: pcmToWavBase64FromBuffer(Buffer.concat(pcmChunks)), mimeType: 'audio/wav', voice, model });
+        done({ error: 'Gemini Live bağlantısı ses dönmeden kapandı', detail: '' });
+      }
+    });
+  });
+}
+
 export function makeServer() {
   return createServer(async (req, res) => {
     const send = (status, data) => { res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify(data)); };
@@ -167,6 +244,19 @@ export function makeServer() {
 </html>`);
     }
     if (req.url === '/health' && req.method === 'GET') return send(200, { ok: true });
+    if (req.url === '/live-speech' && req.method === 'POST') {
+      if (!process.env.GEMINI_API_KEY) return send(503, { error: 'Sunucu henüz yapılandırılmadı.' });
+      try {
+        let size = 0; const chunks = [];
+        for await (const chunk of req) { size += chunk.length; if (size > 20000) { send(413, { error: 'Metin çok uzun.' }); req.destroy(); return; } chunks.push(chunk); }
+        const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        const text = typeof body.text === 'string' ? body.text.trim() : '';
+        if (!text || text.length > 4000) return send(400, { error: 'Geçersiz metin.' });
+        const audio = await synthesizeLiveSpeech(text);
+        if (!audio || audio.error) return send(502, { error: 'Live ses hazırlanamadı.', liveError: audio?.error || 'Bilinmeyen Live hatası', liveDetail: audio?.detail || '' });
+        return send(200, { audio });
+      } catch { return send(400, { error: 'Geçersiz istek.' }); }
+    }
     if (req.url === '/speech' && req.method === 'POST') {
       if (!process.env.GEMINI_API_KEY) return send(503, { error: 'Sunucu henüz yapılandırılmadı.' });
       try {
@@ -180,7 +270,7 @@ export function makeServer() {
         return send(200, { audio });
       } catch { return send(400, { error: 'Geçersiz istek.' }); }
     }
-    if (req.url === '/config' && req.method === 'GET') return send(200, { geminiKeyConfigured: Boolean(process.env.GEMINI_API_KEY), geminiModel: process.env.GEMINI_MODEL || null, geminiTtsModel: process.env.GEMINI_TTS_MODEL || 'gemini-3.1-flash-tts-preview', geminiTtsVoice: process.env.GEMINI_TTS_VOICE || 'Gacrux', dailyLimit: Number(process.env.DAILY_LIMIT || 100) });
+    if (req.url === '/config' && req.method === 'GET') return send(200, { geminiKeyConfigured: Boolean(process.env.GEMINI_API_KEY), geminiModel: process.env.GEMINI_MODEL || null, geminiTtsModel: process.env.GEMINI_TTS_MODEL || 'gemini-3.1-flash-tts-preview', geminiTtsVoice: process.env.GEMINI_TTS_VOICE || 'Gacrux', geminiLiveModel: process.env.GEMINI_LIVE_MODEL || 'gemini-3.1-flash-live-preview', geminiLiveVoice: process.env.GEMINI_LIVE_VOICE || process.env.GEMINI_TTS_VOICE || 'Gacrux', dailyLimit: Number(process.env.DAILY_LIMIT || 100) });
     if (req.url !== '/reading' || req.method !== 'POST') return send(404, { error: 'Bulunamadı.' });
     if (!process.env.GEMINI_API_KEY || !process.env.GEMINI_MODEL) return send(503, { error: 'Sunucu henüz yapılandırılmadı.' });
     let body;
