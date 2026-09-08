@@ -113,8 +113,8 @@ export function makeServer() {
       const data = await response.json();
       const candidate = data.candidates?.[0];
       const text = candidate?.content?.parts?.filter(p => !p.thought).map(p => p.text || '').join('').trim();
-      if (!text || candidate.finishReason !== 'STOP') return send(502, { error: 'Tam yorum alınamadı.' });
-      send(200, { text, sources, newsStatus: sources.length ? 'available' : 'unavailable' });
+      if (!text) return send(502, { error: 'Tam yorum alınamadı.', finishReason: candidate?.finishReason || null });
+      send(200, { text, finishReason: candidate?.finishReason || null, sources, newsStatus: sources.length ? 'available' : 'unavailable' });
     } catch { send(502, { error: 'Bağlantı zaman aşımı veya servis hatası.' }); }
     finally { active--; }
   });
